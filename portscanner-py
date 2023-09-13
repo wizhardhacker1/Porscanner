@@ -1,0 +1,136 @@
+import socket
+import ipaddress
+import concurrent.futures
+import webbrowser
+import tkinter as tk
+from tkinter import ttk
+from tkinter import messagebox
+from datetime import datetime
+
+# Function to scan a single host for open ports
+def scan_host(host, port):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            result = sock.connect_ex((host, port))
+            if result == 0:
+                return port
+    except Exception as e:
+        pass
+    return None
+
+# Function to start the scan
+def start_scan():
+    # Update the label text to show "Scanning started"
+    scan_label.config(text="Scanning started... Report will open automatically")
+    scan_label.update_idletasks()  # Force an immediate update
+
+    # Get subnet, ports, and report name from the GUI
+    subnet = subnet_entry.get()
+    port_range = port_entry.get()
+    report_name = report_entry.get()
+
+    # Validate the subnet input
+    try:
+        ipaddress.IPv4Network(subnet, strict=False)
+    except ValueError as e:
+        messagebox.showerror("Error", "Invalid subnet format. Please enter a valid subnet.")
+        return
+
+    # Parse the port range
+    ports_to_scan = []
+    for part in port_range.split(","):
+        if "-" in part:
+            start, end = part.split("-")
+            try:
+                start, end = int(start), int(end)
+                ports_to_scan.extend(range(start, end + 1))
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid port range: {part}. Please enter a valid range.")
+                return
+        else:
+            try:
+                ports_to_scan.append(int(part))
+            except ValueError:
+                messagebox.showerror("Error", f"Invalid port: {part}. Please enter a valid port number.")
+                return
+
+    # Create an HTML report file
+    report_file_path = f"{report_name}.html"
+    with open(report_file_path, "w") as report_file:
+        report_file.write("<html><head><title>Subnet Scan Report</title></head><body>")
+
+        # Timestamp
+        report_file.write(f"<h2>Scan Timestamp: {datetime.now()}</h2>")
+
+        # Function to scan an IP address and generate a report
+        def scan_and_report(ip):
+            open_ports = []
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = list(executor.map(scan_host, [str(ip)] * len(ports_to_scan), ports_to_scan))
+            open_ports = [port for port in results if port is not None]
+            return ip, open_ports
+
+        # Create a list of IP addresses in the subnet
+        ip_addresses = list(ipaddress.IPv4Network(subnet, strict=False))
+
+        # Scan IP addresses concurrently
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            scan_results = list(executor.map(scan_and_report, ip_addresses))
+
+        # Generate a report for hosts with open ports
+        for ip, open_ports in scan_results:
+            if open_ports:
+                report_file.write(f"<h3><font color='red'>{ip}</font></h3>")
+                report_file.write("<p>Open Ports:</p>")
+                report_file.write("<ul>")
+                for port in open_ports:
+                    report_file.write(f"<li>{port}</li>")
+                report_file.write("</ul>")
+
+        # Close the HTML
+        report_file.write("</body></html>")
+
+    messagebox.showinfo("Info", f"Subnet scan complete. Report saved as {report_file_path}")
+
+    # Open the report in the default web browser
+    webbrowser.open(report_file_path)
+
+    # Clear the label text
+    scan_label.config(text="")
+
+# Create the main application window
+app = tk.Tk()
+app.title("NIHD Subnet Port Scanner")
+
+# Create and arrange GUI elements
+frame = ttk.Frame(app)
+frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
+
+subnet_label = ttk.Label(frame, text="Subnet to Scan: (10.20.0.0/24) or /32 for single host")
+subnet_label.grid(row=0, column=0, padx=5, pady=5)
+
+subnet_entry = ttk.Entry(frame)
+subnet_entry.grid(row=0, column=1, padx=5, pady=5)
+
+port_label = ttk.Label(frame, text="Ports to Scan: (21,22 or 21-25)")
+port_label.grid(row=1, column=0, padx=5, pady=5)
+
+port_entry = ttk.Entry(frame)
+port_entry.grid(row=1, column=1, padx=5, pady=5)
+
+report_label = ttk.Label(frame, text="Report Name:")
+report_label.grid(row=2, column=0, padx=5, pady=5)
+
+report_entry = ttk.Entry(frame)
+report_entry.grid(row=2, column=1, padx=5, pady=5)
+
+scan_button = ttk.Button(frame, text="Start Scan", command=start_scan)
+scan_button.grid(row=3, columnspan=2, padx=5, pady=10)
+
+# Create a label to display scan status
+scan_label = ttk.Label(frame, text="")
+scan_label.grid(row=4, columnspan=2, padx=10, pady=10)
+
+# Run the GUI application
+app.mainloop()
